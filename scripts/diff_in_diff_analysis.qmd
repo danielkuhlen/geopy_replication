@@ -1,0 +1,723 @@
+---
+title: "Diff-in-Diff Analysis"
+format: pdf
+---
+
+# Packages
+
+```{r packages, echo=FALSE, warning=FALSE, message=FALSE}
+pacman::p_load(tidyverse,
+               rio,
+               lubridate,
+               janitor,
+               showtext,
+               scico,
+               ggtext,
+               patchwork,
+               gghighlight,
+               fuzzyjoin,
+               stargazer)
+```
+
+# Data
+
+## Night-Light-Data
+
+```{r data_nld, echo=FALSE, warning=FALSE, message=FALSE}
+### data import 
+ca_nld <- read.csv('../data/output/nightlight_raw/monthly/all_countries.csv') %>%
+  as.data.frame() %>% 
+  dplyr::select(COUNTRY,
+                NAME_1,
+                n_pixels,
+                n_non_na_pixels,
+                prop_non_na_pixels,
+                ntl_mean,
+                date) %>%
+  rename(country_name = COUNTRY,
+         district_name = NAME_1,
+         ntl_mean_district_monthly = ntl_mean)
+
+### base level data wrangling
+ca_nld <- ca_nld %>%
+  mutate(year = year(date))
+
+
+# ntl_mean_district_yearly
+ntl_mean_district_yearly <- ca_nld %>%
+  group_by(district_name,
+           year) %>%
+  summarise(ntl_mean_district_yearly = mean(ntl_mean_district_monthly,
+                                            na.rm = TRUE),
+                                            .groups = 'drop')
+
+# ntl_mean_country_monthly
+ntl_mean_country_monthly <- ca_nld %>%
+  group_by(country_name,
+           date) %>%
+  summarise(ntl_mean_country_monthly = mean(ntl_mean_district_monthly,
+                                            na.rm = TRUE),
+                                            .groups = 'drop')
+
+# ntl_mean_country_yearly
+ntl_mean_country_yearly <- ca_nld %>%
+  group_by(country_name,
+           year) %>%
+  summarise(ntl_mean_country_yearly = mean(ntl_mean_district_monthly,
+                                            na.rm = TRUE),
+                                            .groups = 'drop')
+
+
+# add to master dataframe
+ca_nld <- ca_nld %>%
+  left_join(ntl_mean_country_monthly, by = c("country_name", "date")) %>%
+  left_join(ntl_mean_country_yearly, by = c("country_name", "year")) %>% 
+  left_join(ntl_mean_district_yearly, by = c("district_name", "year")) %>%
+  dplyr::select(country_name,
+                district_name,
+                n_pixels,
+                n_non_na_pixels,
+                prop_non_na_pixels,
+                ntl_mean_district_monthly,
+                ntl_mean_district_yearly,
+                ntl_mean_country_monthly,
+                ntl_mean_country_yearly,
+                date,
+                year)
+
+# rm process files
+rm(ntl_mean_country_monthly,
+   ntl_mean_country_yearly,
+   ntl_mean_district_yearly)
+```
+
+## Latino-Barometro
+
+```{r data_lb, echo=FALSE, warning=FALSE, message=FALSE}
+# data ---
+
+lb_2013 <- import("../data/input/lb_2013_eng.rdata")
+lb_2015 <- import("../data/input/lb_2015_eng.rdata")
+lb_2016 <- import("../data/input/lb_2016_eng.rdata")
+lb_2017 <- import("../data/input/lb_2017_eng.rdata")
+lb_2018 <- import("../data/input/lb_2018_eng.rds")
+lb_2020 <- import("../data/input/lb_2020_eng.rdata")
+lb_2023 <- import("../data/input/lb_2023_eng.rdata")
+
+
+# datacleaning ---
+
+# 2013
+lb_2013_clean <- lb_2013 %>%
+  mutate(year = "2013") %>% 
+  rename(country_code = idenpa,
+         crime_concern = P67ST,
+         crime_victim_exp = P68ST.A) %>%
+  select(country_code, year,
+         crime_concern, crime_victim_exp)
+
+# 2015 
+lb_2015_clean <- lb_2015 %>%
+  mutate(year = "2015") %>%  
+  rename(country_code = idenpa,
+         crime_concern = P57ST,
+         crime_victim_exp = P60ST) %>%
+  select(country_code, year,
+         crime_concern, crime_victim_exp)
+
+# 2016 
+lb_2016_clean <- lb_2016 %>%
+  mutate(year = "2016") %>%  
+  rename(country_code = idenpa,
+         crime_concern = P39ST,
+         crime_victim_exp = P37ST) %>%
+  select(country_code, year,
+         crime_concern, crime_victim_exp)
+
+# 2017
+lb_2017_clean <- lb_2017 %>%
+  mutate(year = "2017") %>% 
+  rename(country_code = idenpa,
+         crime_concern = P66ST,
+         crime_victim_exp = P65ST.B) %>%
+  select(country_code, year,
+         crime_concern, crime_victim_exp)
+
+# 2018
+lb_2018_clean <- lb_2018 %>%
+  mutate(year = "2018") %>%  
+  rename(country_code = IDENPA,
+         crime_concern = P70ST,
+         crime_victim_exp = P69ST.2) %>%
+  select(country_code, year,
+         crime_concern, crime_victim_exp)
+
+# 2020
+lb_2020_clean <- lb_2020 %>%
+  mutate(year = "2020") %>% 
+  rename(country_code = idenpa,
+         crime_concern = p65st,
+         crime_victim_exp = p64st) %>%
+  select(country_code, year,
+         crime_concern, crime_victim_exp)
+
+# 2023
+lb_2023_clean <- lb_2023 %>%
+  mutate(year = "2023") %>% 
+  rename(country_code = idenpa,
+         crime_concern = P59ST,
+         crime_victim_exp = P58ST) %>%
+  select(country_code, year,
+         crime_concern, crime_victim_exp)
+
+
+# rbind everything in one dataframe
+lb_crime <- bind_rows(lb_2013_clean,
+                      lb_2015_clean,
+                      lb_2016_clean,
+                      lb_2017_clean,
+                      lb_2018_clean,
+                      lb_2020_clean,
+                      lb_2023_clean) %>%
+  filter(country_code %in% c(222, 320, 340, 558, 188, 484, 591)) %>%
+  mutate(country_name = case_when(country_code == 222 ~ "El Salvador",
+                                  country_code == 320 ~ "Guatemala",
+                                  country_code == 340 ~ "Honduras",
+                                  country_code == 558 ~ "Nicaragua",
+                                  country_code == 188 ~ "Costa Rica",
+                                  country_code == 484 ~ "Mexico",
+                                  country_code == 591 ~ "Panama"))
+
+crime_summary <- lb_crime %>%
+  mutate(crime_concern = as.factor(crime_concern)) %>%
+  group_by(country_name, year) %>%
+  summarise(
+    total_count = n(),
+    never_count = sum(crime_concern == 1, na.rm = TRUE),
+    proportion_never = never_count / total_count,
+    .groups = 'drop') %>%
+  filter(year %in% c("2017", "2018", "2020", "2023")) %>%
+  ungroup()
+
+# rm process files
+rm(lb_2013,lb_2013_clean,
+   lb_2015,lb_2015_clean,
+   lb_2016,lb_2016_clean,
+   lb_2017,lb_2017_clean,
+   lb_2018,lb_2018_clean,
+   lb_2020,lb_2020_clean,
+   lb_2023,lb_2023_clean)
+```
+
+## Population Density
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# import
+pop_density <- import('../data/output/population/pop_density.csv') %>%
+  rename(district_name = 'Admin Area',
+         pop_density_22 = 'Population Density') %>%
+  distinct(district_name, .keep_all = T) %>%
+  select(-Country)
+
+
+ca_nld <- ca_nld %>% 
+  stringdist_left_join(pop_density,
+                       by = "district_name",
+                       method = "jw", 
+                       max_dist = 0.1) %>% 
+  select(-district_name.y) %>%
+  rename(district_name = district_name.x) %>% 
+  filter(!is.na(pop_density_22))
+```
+
+# Misc
+
+```{r misc, echo=FALSE, warning=FALSE, message=FALSE}
+### formatting
+
+# font
+font <- "Playfair Display"
+font_add_google(family=font, font, db_cache = TRUE)
+fa_path <- systemfonts::font_info(family = "Font Awesome 6 Brands")[["path"]]
+font_add(family = "fa-brands", regular = fa_path)
+
+# theme
+theme_set(theme_minimal(base_family = font, base_size = 10))
+
+# background
+bg <- "#F4F5F1"
+
+# text
+txt_col <- "black"
+showtext_auto(enable = TRUE)
+caption_text  <- str_glue("**Design:** Gilbert Fontana<br>","**Data:** OECD, 2022")
+```
+
+# Plots
+
+## Country Level Average Monthly Nightlight Radiance (Poster)
+
+```{r, echo=FALSE}
+nld_country_years_df <- ca_nld %>% 
+  mutate(date = as.Date(date)) %>% 
+  distinct(country_name, date, ntl_mean_country_monthly) %>%
+  filter(country_name %in% c('El Salvador',
+                             'Guatemala',
+                              'Honduras', 
+                              'Nicaragua'))
+
+nld_country_years <- nld_country_years_df %>% 
+  ggplot(aes(x = date,
+             y = ntl_mean_country_monthly,
+             color = country_name)) +
+  geom_smooth(se = FALSE,
+              size = .3) +
+  geom_line() +
+  geom_point(data=nld_country_years_df %>% 
+               group_by(country_name) %>% 
+               slice_max(date),
+             shape=16) +
+  gghighlight(use_direct_label = FALSE,
+              unhighlighted_params = list(colour = alpha("grey85",
+                                                         1))) +
+  # geom_text(data=nld_country_years_df %>% 
+  #              group_by(country_name) %>% 
+  #              slice_max(date),
+  #            aes(label = round(ntl_mean_country_monthly, 2)),
+  #           hjust = -.5,
+  #           vjust = .5,
+  #           size=15,
+  #           family=font,
+  #           fontface="bold") +
+  scale_x_date(date_labels = "%Y") + 
+  facet_wrap(~  factor(country_name, levels=c('El Salvador',
+                                              'Guatemala',
+                                              'Honduras', 
+                                              'Nicaragua'))) +
+  coord_cartesian(clip = "off") +
+  labs(y = "Average Monthly Nightlight Radiance") +
+  theme(
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    # axis.title.y = element_text(size = 100,
+    #                             margin = margin(r = 10)),
+    axis.text = element_text(color=txt_col, 
+                             size=75),
+    strip.text.x = element_text(face="bold",
+                                size = 75),
+    plot.title = element_markdown(hjust=.5,
+                                  size=300,
+                                  color=txt_col,
+                                  lineheight=.8,
+                                  face="bold",
+                                  margin=margin(20,0,30,0)),
+    plot.subtitle = element_markdown(hjust=.5,
+                                     size=100,
+                                     color=txt_col,
+                                     lineheight = 1,
+                                     margin=margin(10,0,30,0)),
+    plot.caption = element_markdown(hjust=.5,
+                                    margin=margin(60,0,0,0),
+                                    size=100, 
+                                    color=txt_col,
+                                    lineheight = 1.2),
+    plot.caption.position = "plot",
+    plot.margin = margin(10,10,10,10),
+    legend.position = "none",
+    legend.title = element_text(face="bold"))
+
+# export plot
+ggsave("../output/plots/nld_country_years_poster.png",
+       plot = nld_country_years,
+       dpi = 500,
+       width = 208,
+       height = 215,
+       units = "mm")
+
+# rm process files
+rm(nld_country_years_df,
+   nld_country_years)
+```
+
+## Country Level Average Monthly Nightlight Radiance (Research Report)
+
+```{r, echo=FALSE}
+nld_country_years_df <- ca_nld %>% 
+  mutate(date = as.Date(date)) %>% 
+  distinct(country_name, date, ntl_mean_country_monthly) %>%
+  filter(country_name %in% c('El Salvador',
+                             'Guatemala',
+                              'Honduras', 
+                              'Nicaragua'))
+
+nld_country_years <- nld_country_years_df %>% 
+  ggplot(aes(x = date,
+             y = ntl_mean_country_monthly,
+             color = country_name)) +
+  geom_smooth(se = FALSE,
+              size = .3) +
+  geom_line() +
+  geom_point(data=nld_country_years_df %>% 
+               group_by(country_name) %>% 
+               slice_max(date),
+             shape=16) +
+  gghighlight(use_direct_label = FALSE,
+              unhighlighted_params = list(colour = alpha("grey85",
+                                                         1))) +
+  # geom_text(data=nld_country_years_df %>% 
+  #              group_by(country_name) %>% 
+  #              slice_max(date),
+  #            aes(label = round(ntl_mean_country_monthly, 2)),
+  #           hjust = -.5,
+  #           vjust = .5,
+  #           size=15,
+  #           family=font,
+  #           fontface="bold") +
+  scale_x_date(date_labels = "%Y") + 
+  facet_wrap(~  factor(country_name, levels=c('El Salvador',
+                                              'Guatemala',
+                                              'Honduras', 
+                                              'Nicaragua'))) +
+  coord_cartesian(clip = "off") +
+  labs(y = "Average Monthly Nightlight Radiance") + 
+  theme(
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    # axis.title.y = element_text(size = 100,
+    #                             margin = margin(r = 10)),
+    axis.text = element_text(color=txt_col),
+    strip.text.x = element_text(face="bold"),
+    plot.title = element_markdown(hjust=.5,
+                                  color=txt_col,
+                                  lineheight=.8,
+                                  face="bold",
+                                  size = 20,
+                                  margin=margin(20,0,30,0)),
+    plot.subtitle = element_markdown(hjust=.5,
+                                     color=txt_col,
+                                     lineheight = 1,
+                                     margin=margin(10,0,30,0)),
+    plot.caption = element_markdown(hjust=.5,
+                                    margin=margin(60,0,0,0),
+                                    color=txt_col,
+                                    lineheight = 1.2),
+    plot.caption.position = "plot",
+    plot.margin = margin(10,10,10,10),
+    legend.position = "none",
+    legend.title = element_text(face="bold"))
+
+# export plot
+ggsave("../output/plots/nld_country_years_report.png",
+       plot = nld_country_years,
+       dpi = 500)
+
+# display plot
+nld_country_years
+
+# rm process files
+rm(nld_country_years_df,
+   nld_country_years)
+```
+
+
+## Department Level Average Monthly Nightlight Radiance (Research Report)
+
+```{r, echo=FALSE}
+nld_country_years_df <- ca_nld %>% 
+  mutate(date = as.Date(date)) %>% 
+  distinct(district_name, date, ntl_mean_country_monthly) %>%
+  filter(district_name %in% c('San Salvador',
+                              'Guatemala',
+                              'Francisco Morazán',
+                              'Managua') &
+        date <= as.Date("2022-03-27"))
+
+custom_labels <- c('San Salvador' = "Custom Label 1",
+                   'Guatemala' = "Custom Label 2",
+                   'Francisco Morazán' = "Custom Label 3",
+                   'Managua' = "Custom Label 4")
+
+nld_country_years <- nld_country_years_df %>% 
+  ggplot(aes(x = date,
+             y = ntl_mean_country_monthly,
+             color = district_name)) +
+  geom_smooth(se = FALSE,
+              size = .3) +
+  geom_line() +
+  geom_point(data=nld_country_years_df %>% 
+               group_by(district_name) %>% 
+               slice_max(date),
+             shape=16) +
+  gghighlight(use_direct_label = FALSE,
+              unhighlighted_params = list(colour = alpha("grey85",
+                                                         1))) +
+  # geom_text(data=nld_country_years_df %>% 
+  #              group_by(country_name) %>% 
+  #              slice_max(date),
+  #            aes(label = round(ntl_mean_country_monthly, 2)),
+  #           hjust = -.5,
+  #           vjust = .5,
+  #           size=15,
+  #           family=font,
+  #           fontface="bold") +
+  scale_x_date(date_labels = "%Y") + 
+  facet_wrap(~ factor(district_name, levels=c('San Salvador',
+                                              'Guatemala',
+                                              'Francisco Morazán',
+                                              'Managua')),
+             labeller = labeller(district_name = custom_labels)) +
+  coord_cartesian(clip = "off") +
+  labs(y = "Average Monthly Nightlight Radiance") + 
+  theme(
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    # axis.title.y = element_text(size = 100,
+    #                             margin = margin(r = 10)),
+    axis.text = element_text(color=txt_col),
+    strip.text.x = element_text(face="bold"),
+    plot.title = element_markdown(hjust=.5,
+                                  color=txt_col,
+                                  lineheight=.8,
+                                  face="bold",
+                                  size = 20,
+                                  margin=margin(20,0,30,0)),
+    plot.subtitle = element_markdown(hjust=.5,
+                                     color=txt_col,
+                                     lineheight = 1,
+                                     margin=margin(10,0,30,0)),
+    plot.caption = element_markdown(hjust=.5,
+                                    margin=margin(60,0,0,0),
+                                    color=txt_col,
+                                    lineheight = 1.2),
+    plot.caption.position = "plot",
+    plot.margin = margin(10,10,10,10),
+    legend.position = "none",
+    legend.title = element_text(face="bold"))
+
+# export plot
+ggsave("../output/plots/nld_department_years_report.png",
+       plot = nld_country_years,
+       dpi = 500)
+
+# display plot
+nld_country_years
+
+# rm process files
+rm(nld_country_years_df,
+   nld_country_years)
+```
+
+
+## Prevalence of Constant Worry Over Violent Crime in Central America
+
+```{r}
+perceived_crime_risk_ca_df <- crime_summary %>%
+  filter(country_name != 'Nicaragua') %>% 
+  mutate(year = as.numeric(year))
+
+perceived_crime_risk_ca <- perceived_crime_risk_ca_df %>%
+  ggplot(aes(x = year,
+           y = proportion_never,
+           group = country_name,
+           color = country_name)) +
+  geom_line() + 
+  geom_point() +
+  geom_text(data=perceived_crime_risk_ca_df %>% 
+               group_by(country_name) %>% 
+               slice_max(year),
+             aes(label = country_name),
+            hjust = -.1,
+            vjust = .5,
+            size=25,
+            family=font,
+            fontface="bold") +
+  gghighlight(country_name == 'El Salvador',
+              use_direct_label = FALSE,
+              unhighlighted_params = list(colour = 'grey')) +
+  labs(y = "Percentage of People Constantly Worried About Becoming Crime Victims",
+       color = "Country") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_x_continuous(expand = expand_scale(add = c(.1, 1.1)),
+                     breaks = c(2017, 2018, 2019, 2020, 2021, 2022, 2023)) +
+  theme_minimal() +
+  theme(text = element_text(family = font),
+        axis.title = element_blank(),
+        axis.text = element_text(color=txt_col, 
+                             size=75),
+        legend.position = "none",
+        legend.title = element_blank(),
+        legend.text = element_blank())
+
+# export plot
+ggsave("../output/plots/perceived_crime_risk_ca.png",
+       plot = perceived_crime_risk_ca,
+       dpi = 500,
+       width = 208,
+       height = 215,
+       units = "mm")
+
+# rm proces files
+rm(perceived_crime_risk_ca_df,
+   perceived_crime_risk_ca)
+```
+
+## Diff-in-Diff
+
+### Country Level 2021 - 2023
+
+```{r, results='asis'}
+# data wrangling 
+did <- ca_nld %>%
+  filter(date >= as.Date("2021-01-01") & 
+         date <= as.Date("2023-12-31")) %>% 
+  mutate(date = ymd(date), 
+         treatment = if_else(country_name == "El Salvador", 1, 0),
+         post = if_else(date > ymd("2022-03-27"), 1, 0),
+         treatment_post = treatment * post,
+         pop_density_22 = as.numeric(pop_density_22))
+
+# Step 2: Run the difference-in-differences regression model
+model_1 <- lm(ntl_mean_country_monthly ~ treatment + post + treatment_post, data = did)
+model_2 <- lm(ntl_mean_country_monthly ~ treatment + post + treatment_post + pop_density_22, data = did)
+
+# Step 3: Summary of the model to check the coefficients
+stargazer(model_1, model_2,
+          header = F,
+          omit.stat = c('ser', 'f'),
+          type = 'latex',
+          covariate.labels = c("Treatment Prior",
+                               "Post",
+                               "Treatment Post (DiD)",
+                               "Population Density",
+                               "Constant"),
+          dep.var.caption = "DV: Avg. Monthly Night Light",
+          dep.var.labels.include = F,
+          title = "Country Level (2021 - 2023)",
+          label = "country_2021_2023")
+```
+
+### Interpretation: Percent Change Calculation
+
+```{r}
+
+# baseline intensity
+baseline_intensity <- did %>%
+  filter(date < as.Date("2022-03-27")) %>%
+  filter(country_name == "El Salvador") %>%
+  summarise(baseline_intensity = mean(ntl_mean_country_monthly, na.rm = TRUE)) %>%
+  pull(baseline_intensity)
+
+# print the baseline intensity
+print(baseline_intensity)
+
+# Extract the DiD coefficient from model_1 and model_2
+coef_did_model_1 <- coef(model_1)["treatment_post"]
+coef_did_model_2 <- coef(model_2)["treatment_post"]
+
+# Calculate the percentage change from the baseline for each model
+percent_change_model_1 <- (coef_did_model_1 / baseline_intensity) * 100
+percent_change_model_2 <- (coef_did_model_2 / baseline_intensity) * 100
+
+# Print the results
+cat("Percentage change in night light intensity due to treatment (Model 1):", percent_change_model_1, "%\n")
+cat("Percentage change in night light intensity due to treatment (Model 2):", percent_change_model_2, "%\n")
+```
+
+### Country Level 2015 - 2023
+
+```{r, results='asis'}
+# data wrangling 
+did <- ca_nld %>%
+  filter(date >= as.Date("2015-01-01") & 
+         date <= as.Date("2023-12-31")) %>% 
+  mutate(date = ymd(date), 
+         treatment = if_else(country_name == "El Salvador", 1, 0),
+         post = if_else(date > ymd("2022-03-27"), 1, 0),
+         treatment_post = treatment * post,
+         pop_density_22 = as.numeric(pop_density_22))
+
+# Step 2: Run the difference-in-differences regression model
+model_1 <- lm(ntl_mean_country_monthly ~ treatment + post + treatment_post, data = did)
+model_2 <- lm(ntl_mean_country_monthly ~ treatment + post + treatment_post + pop_density_22, data = did)
+
+# Step 3: Summary of the model to check the coefficients
+stargazer(model_1, model_2,
+          header = F,
+          omit.stat = c('ser', 'f'),
+          type = 'latex',
+          covariate.labels = c("Treatment Prior",
+                               "Post",
+                               "Treatment Post (DiD)",
+                               "Population Density",
+                               "Constant"),
+          dep.var.caption = "DV: Avg. Monthly Night Light",
+          dep.var.labels.include = F,
+          title = "Country Level (2015 - 2023)",
+          label = "country_2015_2023")
+```
+
+### Department Level 2021 - 2023
+
+```{r, results='asis'}
+# data wrangling 
+did <- ca_nld %>%
+  filter(date >= as.Date("2021-01-01") & 
+         date <= as.Date("2023-12-31")) %>% 
+  mutate(date = ymd(date), 
+         treatment = if_else(country_name == "El Salvador", 1, 0),
+         post = if_else(date > ymd("2022-03-27"), 1, 0),
+         treatment_post = treatment * post,
+         pop_density_22 = as.numeric(pop_density_22))
+
+# Step 2: Run the difference-in-differences regression model
+model_1 <- lm(ntl_mean_district_monthly ~ treatment + post + treatment_post, data = did)
+model_2 <- lm(ntl_mean_district_monthly ~ treatment + post + treatment_post + pop_density_22, data = did)
+
+# Step 3: Summary of the model to check the coefficients
+stargazer(model_1, model_2,
+          header = F,
+          omit.stat = c('ser', 'f'),
+          type = 'latex',
+          covariate.labels = c("Treatment Prior",
+                               "Post",
+                               "Treatment Post (DiD)",
+                               "Population Density",
+                               "Constant"),
+          dep.var.caption = "DV: Avg. Monthly Night Light",
+          dep.var.labels.include = F,
+          title = "Department Level (2021 - 2023)",
+          label = "dep_2021_2023")
+```
+
+### Department Level 2015 - 2023
+
+```{r, results='asis'}
+# data wrangling 
+did <- ca_nld %>%
+  filter(date >= as.Date("2015-01-01") & 
+         date <= as.Date("2023-12-31")) %>% 
+  mutate(date = ymd(date), 
+         treatment = if_else(country_name == "El Salvador", 1, 0),
+         post = if_else(date > ymd("2022-03-27"), 1, 0),
+         treatment_post = treatment * post,
+         pop_density_22 = as.numeric(pop_density_22))
+
+# Step 2: Run the difference-in-differences regression model
+model_1 <- lm(ntl_mean_district_monthly ~ treatment + post + treatment_post, data = did)
+model_2 <- lm(ntl_mean_district_monthly ~ treatment + post + treatment_post + pop_density_22, data = did)
+
+# Step 3: Summary of the model to check the coefficients
+stargazer(model_1, model_2,
+          header = F,
+          omit.stat = c('ser', 'f'),
+          type = 'latex',
+          covariate.labels = c("Treatment Prior",
+                               "Post",
+                               "Treatment Post (DiD)",
+                               "Population Density",
+                               "Constant"),
+          dep.var.caption = "DV: Avg. Monthly Night Light",
+          dep.var.labels.include = F,
+          title = "Department Level (2015 - 2023)",
+          label = "dep_2015_2023")
+```
